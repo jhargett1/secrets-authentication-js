@@ -3,11 +3,9 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const ejs = require("ejs");
 const mongoose = require("mongoose");
-const bcrypt = require('bcrypt');
-
-const saltRounds = 10;
-
-const secret = process.env.SECRET;
+const session = require('express-session');
+const passport = require("passport");
+const passportLocalMongoose = require("passport-local-mongoose");
 
 const app = express();
 
@@ -17,6 +15,15 @@ app.use(bodyParser.urlencoded({
     extended: true
 }));
 
+app.use(session({
+    secret: "Our little secret.",
+    resave: false,
+    saveUninitialized: false
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
+
 mongoose.connect(process.env.MONGO_CONNECTION);
 
 const userSchema = new mongoose.Schema({
@@ -24,7 +31,14 @@ const userSchema = new mongoose.Schema({
     password: String
 });
 
+userSchema.plugin(passportLocalMongoose);
+
 const User = mongoose.model("User", userSchema);
+
+passport.use(User.createStrategy());
+
+passport.serializeUser(User.serializeUser());
+passport.deserializeUser(User.deserializeUser());
 
 app.get("/", async (req, res) => {
     res.render("home");
@@ -38,51 +52,77 @@ app.get("/register", async (req, res) => {
     res.render("register");
 });
 
-app.post("/register", async  (req, res) => {
-
-    bcrypt.hash(req.body.password, saltRounds, function(err, hash) {
-        const newUser = new User({
-            email: req.body.username,
-            password: hash
-        });
-        newUser.save()
-        .then(createdUser => {
-            if(createdUser) {
-                res.render("secrets");
-            } else {
-                console.log("Something wrong happened.");
-                res.redirect("/");
-            }
-        
-        })
-        .catch(err => {
-            console.log(err);
-            res.redirect("/");
-        });
-    });
-
-    
+app.get("/secrets", async (req, res) => {
+    if (req.isAuthenticated()){
+        res.render("secrets");
+    } else {
+        res.redirect("/login");
+    }
 });
 
-app.post("/login", async (req, res) => { 
-    const username = req.body.username;
-    const password = req.body.password;
-  
+app.post("/register", async (req, res) => {
+
     try {
-      const user = await User.findOne({email: username});
   
-      if (user) {
-        const result = bcrypt.compare(password, user.password);
-        
-        if (result) {
-          res.render("secrets");
-        } 
-      }
-  
+      const user = await User.register({username: req.body.username}, req.body.password);
+      
+      passport.authenticate("local")(req, res, () => {
+        res.redirect("/secrets");
+      });
     } catch (err) {
       console.log(err);
+      res.redirect("/register");
     }
   });
+
+  app.post("/login", async (req, res) => { 
+    const user = new User({
+        username: req.body.username,
+        password: req.body.password
+    });
+
+    try {
+        const loginPromise = new Promise((resolve, reject) => {
+            req.login(user, function(err){
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve();
+                }
+            });
+        });
+
+        await loginPromise;
+
+        passport.authenticate("local")(req, res, () => {
+            res.redirect("/secrets");
+        });
+    } catch (err) {
+        console.log(err);
+    }
+});
+
+app.get("/logout", async (req, res) => {
+    // Wrap req.logout in a Promise to keep async/await functions consistent 
+    const logoutPromise = () => {
+        return new Promise((resolve, reject) => {
+            req.logout((err) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve();
+                }
+            });
+        });
+    };
+
+    try {
+        await logoutPromise();
+        res.redirect("/");
+    } catch (err) {
+        console.log(err);
+    }
+});
 
 app.listen(3000, () => {
     console.log("Server started on port 3000.")
