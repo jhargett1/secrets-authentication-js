@@ -33,7 +33,8 @@ const userSchema = new mongoose.Schema({
     email: String,
     password: String,
     googleId: String,
-    githubId: String
+    githubId: String,
+    secret: String
 });
 
 userSchema.plugin(passportLocalMongoose);
@@ -119,9 +120,37 @@ app.get("/register", async (req, res) => {
 });
 
 app.get("/secrets", async (req, res) => {
+    try {
+        const foundUsers = await User.find({"secret": {$ne: null}});
+        if (foundUsers) {
+            res.render("secrets", {usersWithSecrets: foundUsers});
+        }
+    } catch (err) {
+        console.log(err);
+    }
+});
+
+app.get("/submit", async (req, res) => {
     if (req.isAuthenticated()){
-        res.render("secrets");
+        res.render("submit");
     } else {
+        res.redirect("/login");
+    }
+});
+
+app.post("/submit", async (req, res) => {
+    const submittedSecret = req.body.secret;
+
+    try {
+        const foundUser = await User.findById(req.user.id);
+
+        if (foundUser) {
+            foundUser.secret = submittedSecret;
+            await foundUser.save();
+            res.redirect("/secrets");
+        }
+    } catch (err) {
+        console.log(err);
         res.redirect("/login");
     }
 });
